@@ -387,6 +387,52 @@ sde        8:64   0 119,2G  0 disk
 
 ## encrypt data drives and derive keys from root
 
+In our case we plan to use a ZFS RAID on top of LUKS encrypted drives. This can be done by either encrypting the whole drives or individual a partition on each drive. It could be that having the partition encrypted might be a bit safer since the luks header is not at the beginning of the drive in case some other program accidentally overwrote it (see [here](https://askubuntu.com/questions/571581/are-there-any-advantages-disadvantages-if-any-in-running-luksformat-on-raw-dr)).
+Since using LUKS on the partition doesn't really hurt and ZFS can work with whole disks of partitions we are going to do that.
+
+So first we're going to create new partition tables using fdisk or another tool.
+Then we create a partition that's leaving about 100MB spare in case a replacement disk is a little (even a few sectors) smaller (got the idea [here](https://www.freebsddiary.org/zfs-with-gpart.php)).
+To leave that amount of space we're calculating the exact end sector:
+With a sector size of 512 byte 200MB is 390625 sectors.
+So with a drive with 10TB and 19532873728 sectors the start sector is 2048 (because or the partition table) and the end sector is 19532481054. 
+
+```bash
+root@openmediavault:~# fdisk /dev/sda
+
+Welcome to fdisk (util-linux 2.38.1).
+Changes will remain in memory only, until you decide to write them.
+Be careful before using the write command.
+
+Command (m for help): p
+Disk /dev/sda: 9.1 TiB, 10000831348736 bytes, 19532873728 sectors
+Disk model: WDC WD102KFBX-68
+Units: sectors of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 4096 bytes
+I/O size (minimum/optimal): 4096 bytes / 4096 bytes
+Disklabel type: gpt
+Disk identifier: 1D2C9CA2-615C-694B-8C22-A255236BA674
+
+Command (m for help): n
+Partition number (1-128, default 1): 
+First sector (2048-19532873694, default 2048): 
+Last sector, +/-sectors or +/-size{K,M,G,T,P} (2048-19532873694, default 19532871679): 19532481054
+
+Created a new partition 1 of type 'Linux filesystem' and of size 9.1 TiB.
+
+Command (m for help): p
+Disk /dev/sda: 9.1 TiB, 10000831348736 bytes, 19532873728 sectors
+Disk model: WDC WD102KFBX-68
+Units: sectors of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 4096 bytes
+I/O size (minimum/optimal): 4096 bytes / 4096 bytes
+Disklabel type: gpt
+Disk identifier: 1D2C9CA2-615C-694B-8C22-A255236BA674
+
+Device     Start         End     Sectors  Size Type
+/dev/sda1   2048 19532481054 19532479007  9.1T Linux filesystem
+
+```
+
 I setup for each data drive the same LUKS key and a second key that is derived
 from root decrypt. This way at boot only one key is necessary but "in case"
 the drives can be unlocked on their own.
@@ -399,49 +445,43 @@ Initial creation will be with an initial key, which is used to unlock in case
 of emergency.
 
 ```sh
-cryptsetup --cipher aes-xts-plain64 -s 512 -h sha256 --iter-time 5000 luksFormat /dev/sda
-cryptsetup --cipher aes-xts-plain64 -s 512 -h sha256 --iter-time 5000 luksFormat /dev/sdb
-cryptsetup --cipher aes-xts-plain64 -s 512 -h sha256 --iter-time 5000 luksFormat /dev/sdc
-cryptsetup --cipher aes-xts-plain64 -s 512 -h sha256 --iter-time 5000 luksFormat /dev/sdd
+cryptsetup --cipher aes-xts-plain64 -s 512 -h sha256 --iter-time 5000 luksFormat /dev/sda1
+cryptsetup --cipher aes-xts-plain64 -s 512 -h sha256 --iter-time 5000 luksFormat /dev/sdb1
+cryptsetup --cipher aes-xts-plain64 -s 512 -h sha256 --iter-time 5000 luksFormat /dev/sdc1
+cryptsetup --cipher aes-xts-plain64 -s 512 -h sha256 --iter-time 5000 luksFormat /dev/sdd1
 ```
 
-### create derived keys and crypttab
+### create keyfiles and crypttab
 
-Now lets add the key from the derived root mapper.
+Now lets add the keyfile to the encrypted partitions.
+First create a random keyfile
 
 ```sh
-cryptsetup luksAddKey /dev/sda <(/lib/cryptsetup/scripts/decrypt_derived root)
-cryptsetup luksAddKey /dev/sdb <(/lib/cryptsetup/scripts/decrypt_derived root)
-cryptsetup luksAddKey /dev/sdc <(/lib/cryptsetup/scripts/decrypt_derived root)
-cryptsetup luksAddKey /dev/sdd <(/lib/cryptsetup/scripts/decrypt_derived root)
+dd bs=512 count=4 if=/dev/random iflag=fullblock | install -m 0600 /dev/stdin /root/.luks/keyfile
+```
+
+
+```sh
+cryptsetup luksAddKey /dev/sda1 /root/.luks/keyfile
+cryptsetup luksAddKey /dev/sdb1 /root/.luks/keyfile
+cryptsetup luksAddKey /dev/sdc1 /root/.luks/keyfile
+cryptsetup luksAddKey /dev/sdd1 /root/.luks/keyfile
 ```
 
 `cryptsetup luksDump /dev/sda` now shows 2 keys.
 
-To create the data_key on the enrypted root device
-
-> This approach is chosen as i.e. `decrypt_derived` as `keyscript=` is ignored
-> by `systemd`
-
-```sh
-mkdir -p /root/.luks
-chmod 700 /root/.luks
-/lib/cryptsetup/scripts/decrypt_derived root > /root/.luks/data_key
-chmid 400 /root/.luks/data_key
-```
-
-Next append to `crypttab`, timeout is added to make it boot even in case of error.
+Next append to `crypttab`, timeout is added to make it boot even in case of error. It might be preferrable to choose another name instead of sdX-crypt since the letters can change. One could use the serialnumber or model number of the device. Find it by running `find -L /dev/disk -samefile /dev/sda` and match it to the UUID.
 
 ```sh
 /etc/crypttab:
 # data drives
-sda-crypt         UUID=xxxx          /root/.luks/data_key           luks,timeout=10s
-sdb-crypt         UUID=xxxx          /root/.luks/data_key           luks,timeout=10s
-sdc-crypt         UUID=xxxx          /root/.luks/data_key           luks,timeout=10s
-sdd-crypt         UUID=xxxx          /root/.luks/data_key           luks,timeout=10s
+sda-crypt         UUID=xxxx          /root/.luks/keyfile           luks,timeout=10s
+sdb-crypt         UUID=xxxx          /root/.luks/keyfile           luks,timeout=10s
+sdc-crypt         UUID=xxxx          /root/.luks/keyfile           luks,timeout=10s
+sdd-crypt         UUID=xxxx          /root/.luks/keyfile           luks,timeout=10s
 ```
 
-Reboot and check if everything is mounted correctly
+Reboot and check if everything is mounted correctly. This example was kept from the forked repository. With different drives the output will differ. When choosing different names in the crypttab the mounting points will also differ.
 
 ```sh
 lsblk
@@ -467,13 +507,14 @@ the commands from above and add it to `/etc/crypttab`.
 
 > OMV drive encryption plugin is usable as well to add the key and backup headers.
 
-## create filesystem
+## create zfs pool
 
 Now whenever normaly refering to `/dev/sda` just use `/dev/mapper/sda-crypt` instead.
 
 ```sh
-screen -d -m mkfs.ext4 -b 4096 -m 0 -E lazy_itable_init=0,lazy_journal_init=0 -O 64bit /dev/mapper/sda-crypt -L parity1
-screen -d -m mkfs.ext4 -b 4096 -m 0 -E lazy_itable_init=0,lazy_journal_init=0 -O 64bit /dev/mapper/sdb-crypt -L data1
-screen -d -m mkfs.ext4 -b 4096 -m 0 -E lazy_itable_init=0,lazy_journal_init=0 -O 64bit /dev/mapper/sdc-crypt -L data2
-screen -d -m mkfs.ext4 -b 4096 -m 0 -E lazy_itable_init=0,lazy_journal_init=0 -O 64bit /dev/mapper/sdd-crypt -L data3
+zpool create drivepool raidz /dev/mapper/sda-crypt /dev/mapper/sdb-crypt /dev/mapper/sdc-crypt /dev/mapper/sdd-crypt
 ```
+
+This will create a raid pool with all four disks and a RAID 5 (1 drive parity) configuration.
+
+> OMV ZFS plugin can be used to check on the drive pool.
