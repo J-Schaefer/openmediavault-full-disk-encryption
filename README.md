@@ -516,5 +516,6 @@ zpool create drivepool raidz /dev/mapper/sda-crypt /dev/mapper/sdb-crypt /dev/ma
 ```
 
 This will create a raid pool with all four disks and a RAID 5 (1 drive parity) configuration.
+Read some more about ZFS Configuration in the [Debian Wiki/ZFS article](https://wiki.debian.org/ZFS).
 
 > OMV ZFS plugin can be used to check on the drive pool.
