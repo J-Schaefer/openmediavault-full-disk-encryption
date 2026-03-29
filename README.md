@@ -56,8 +56,8 @@ DROPBEAR_OPTIONS="-I 180 -j -k -p 2222 -s -c cryptroot-unlock"
 Now paste your public ssh key to the `authorized_keys` file.
 
 ```sh
-echo "ssh-rsa ..." >> /etc/dropbear-initramfs/authorized_keys
-chmod 600 /etc/dropbear-initramfs/authorized_keys
+echo "ssh-rsa ..." >> /etc/dropbear/initramfs/authorized_keys  # this file should go in /etc/dropbear-initramfs/authorized_keys on older systems
+chmod 600 /etc/dropbear/initramfs/authorized_keys
 ```
 
 Update the boot image
@@ -225,7 +225,7 @@ Read more about full system encryption in the [Arch-Wiki article on Encrypting a
 
 ```sh
 mkdir /newroot
-mount /dev/mapper/root /newroot
+mount /dev/mapper/croot /newroot
 mkdir /newroot/boot
 mount /dev/sda2 /newroot/boot
 mkdir /newroot/boot/efi
@@ -246,7 +246,7 @@ Next we will update everything
 
 ```sh
 /etc/fstab:
-/dev/mapper/root / ext4 defaults 0 2
+/dev/mapper/croot / ext4 defaults 0 2
 UUID=<uuid of /dev/sda2> /boot ext4 defaults 0 1
 UUID=<uuid of /dev/sda1> /boot/efi vfat defaults 0 1
 # swap was on /dev/sda3 during installation
@@ -260,7 +260,7 @@ Use UUID to make sure the correct drive is mounted (`blkid /dev/sda4`)
 ```sh
 /etc/crypttab:
 # <target name>	<source device>		<key file>	<options>
-root UUID=<uuid> none luks
+croot UUID=<uuid> none luks
 ```
 
 RESUME is not wanted in initramfs
@@ -319,6 +319,7 @@ umount every device after leaving the `chroot` and reboot
 
 ```sh
 logout
+umount /newroot/boot/efi
 umount /newroot/boot
 umount /newroot/proc
 umount /newroot/sys
@@ -333,7 +334,7 @@ reboot
 
 log into the dropbear and run `cryptroot-unlock`
 
-```sh
+```bash
 ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -p2222 root@x
 Warning: Permanently added '[x]:2222' (ECDSA) to the list of known hosts.
 To unlock root partition, and maybe others like swap, run `cryptroot-unlock`
