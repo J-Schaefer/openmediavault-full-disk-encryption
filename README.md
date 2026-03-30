@@ -33,7 +33,7 @@ Follow the documentation: https://openmediavault.readthedocs.io/en/latest/instal
 Make sure following packages are present
 
 ```sh
-apt install cryptsetup-initramfs
+apt install cryptsetup-initramfs systemd-cryptsetup
 apt install busybox-static dropbear-initramfs
 ```
 
